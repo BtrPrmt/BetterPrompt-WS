@@ -1,38 +1,56 @@
 // prompt_improver_pipeline.js
+import http from 'http'
 
 function classifyPrompt(rawPrompt){
     return `
-    You’re a classifier that labels user prompts as one of:
-- “IMPROVABLE” (straightforward informational Q&A that can be enhanced with context),
-- “NON_IMPROVABLE” (requests like code review, refactoring, or bug-fixing where prompt-improvement logic doesn’t apply).
+Reply with exactly one label:  
+IMPROVABLE / NEEDS_MORE_INFO / NON_IMPROVABLE
+    SYSTEM: You are a prompt-type classifier for a developer support tool at a software company. Read each user prompt and assign exactly one of:
 
-Examples:
+  • IMPROVABLE  
+    - A standalone technical question about software concepts or best practices that can be made more precise (e.g. “What is X?”, “Explain Y”).  
+  • NEEDS_MORE_INFO  
+    - A request that shows intent but lacks the detail needed to act (e.g. “How do I fix this?”, “Optimize this service?” without code or metrics).  
+  • NON_IMPROVABLE  
+    - A prompt asking for hands-on review, debugging, or modification of user-provided artifacts (code, configs, logs, prose).
 
-Q: “How can I improve this function?”  
-A: NON_IMPROVABLE
+INSTRUCTIONS:
+1. Output only one label: IMPROVABLE, NEEDS_MORE_INFO, or NON_IMPROVABLE.
+2. Base your decision solely on the prompt text—do not assume unstated context.
+3. For mixed-intent prompts (e.g. concept + code review), pick the dominant intent.
+4. Blank or nonsensical prompts → NEEDS_MORE_INFO.
 
-Q: “Please refactor this code sample.”  
-A: NON_IMPROVABLE
+EXAMPLES:
 
-Q: “Can you review this code snippet?”  
-A: NON_IMPROVABLE
+— IMPROVABLE  
+Q: “What is Kubernetes, and why use it?”  
+Q: “Describe the SOLID principles in object-oriented design.”  
+Q: “List best practices for PostgreSQL indexing.”  
+Q: “Explain the difference between monolithic and microservices architectures.”
 
-Q: “Optimize this SQL query: SELECT * FROM users WHERE …”  
-A: NON_IMPROVABLE
+— NEEDS_MORE_INFO  
+Q: “How can I improve my API's performance?”  
+Q: “Why is my Node.js service throwing 503 errors?”  
+Q: “Optimize this deployment.”  (no YAML or metrics provided)  
+Q: “How do I secure my REST endpoints?”  (no framework or auth details)
 
-Q: “What is C++?”  
-A: IMPROVABLE
+— NON_IMPROVABLE  
+Q: “Please refactor this Python function:  
+\`\`\`  
+def calculate(a, b): return a+b  
+\`\`\`”  
+Q: “Fix the null-pointer exception in this Java stack trace.”  
+Q: “Review my Terraform config for AWS VPC.”  
+Q: “Debug this Dockerfile—build keeps failing.”
 
-Q: “Explain promises in JavaScript.”  
-A: IMPROVABLE
+— MIXED INTENT (choose dominant)  
+Q: “What is Docker, and can you optimize my Dockerfile?” → NON_IMPROVABLE  
+Q: “Explain event-driven architectures and their use cases.” → IMPROVABLE  
 
-Q: “List best practices for React state management.”  
-A: IMPROVABLE
+NOW: Read the user's prompt below. Reply with exactly one label:  
+IMPROVABLE / NEEDS_MORE_INFO / NON_IMPROVABLE
 
-Q: “Describe the Observer pattern.”  
-A: IMPROVABLE
-
-Now classify this prompt (respond with exactly one label):  
+——  
 ${rawPrompt}
 `
 }
@@ -254,21 +272,43 @@ export async function improvePrompt(rawPrompt) {
   console.log('Classification:', status);
 
   if (status !== 'IMPROVABLE') {
-    return `Status is ${status}; prompt improvement pipeline skipped.`;
+    return rawPrompt;
   }
 
   // Build few‑shot prompt and refine
   const fewShot = buildFewShotPrompt(rawPrompt);
-  console.log('Few‑shot prompt:', fewShot);
   const rawRefinement = await runOllama({ model: 'llama3.1:8b', prompt: fewShot });
   return parseOutput(rawRefinement).trim();
 }
 
 
-// Example usage
-  (async () => {
-    const raw = 'What are Level 7 Load balancers';
-    const improved = await improvePrompt(raw);
-    console.log('Improved Prompt:\n', improved);
-  })();
+const PORT = process.env.PORT || 8080;
+
+const server = http.createServer(async (req, res) => {
+  if (req.method === 'POST' && req.url === '/improve') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const { prompt: rawPrompt } = JSON.parse(body);
+        if (!rawPrompt) throw new Error('Missing "prompt" in request body');
+        const improvedPrompt = await improvePrompt(rawPrompt);
+        const responseBody = JSON.stringify({ improvedPrompt });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(responseBody);
+      } catch (err) {
+        res.writeHead(err.message.includes('Missing') ? 400 : 500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+  } else {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Not Found' }));
+  }
+});
+
+server.listen(PORT, () => {
+  console.log(`Prompt Improver API listening on port ${PORT}`);
+});
+
 
