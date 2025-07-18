@@ -1,50 +1,61 @@
-// prompt_improver_pipeline.js
-// If using Node.js ≥18, you can remove this line
+import http from "http";
 
-/**
- * Build the few-shot template for the Prompt Improver.
- */
+function classifyPrompt(rawPrompt) {
+  return `
+Reply with exactly one label:  
+IMPROVABLE / NEEDS_MORE_INFO / NON_IMPROVABLE
+    SYSTEM: You are a prompt-type classifier for a developer support tool at a software company. Read each user prompt and assign exactly one of:
 
-// step -> informational prompts
+  • IMPROVABLE  
+    - A standalone technical question about software concepts or best practices that can be made more precise (e.g. “What is X?”, “Explain Y”).  
+  • NEEDS_MORE_INFO  
+    - A request that shows intent but lacks the detail needed to act (e.g. “How do I fix this?”, “Optimize this service?” without code or metrics).  
+  • NON_IMPROVABLE  
+    - A prompt asking for hands-on review, debugging, or modification of user-provided artifacts (code, configs, logs, prose).
 
-function classifyPrompt(rawPrompt){
-    return `
-    You’re a classifier that labels user prompts as one of:
-- “IMPROVABLE” (straightforward informational Q&A that can be enhanced with context),
-- “NON_IMPROVABLE” (requests like code review, refactoring, or bug-fixing where prompt-improvement logic doesn’t apply).
+INSTRUCTIONS:
+1. Output only one label: IMPROVABLE, NEEDS_MORE_INFO, or NON_IMPROVABLE.
+2. Base your decision solely on the prompt text—do not assume unstated context.
+3. For mixed-intent prompts (e.g. concept + code review), pick the dominant intent.
+4. Blank or nonsensical prompts → NEEDS_MORE_INFO.
 
-Examples:
+EXAMPLES:
 
-Q: “How can I improve this function?”  
-A: NON_IMPROVABLE
+— IMPROVABLE  
+Q: “What is Kubernetes, and why use it?”  
+Q: “Describe the SOLID principles in object-oriented design.”  
+Q: “List best practices for PostgreSQL indexing.”  
+Q: “Explain the difference between monolithic and microservices architectures.”
 
-Q: “Please refactor this code sample.”  
-A: NON_IMPROVABLE
+— NEEDS_MORE_INFO  
+Q: “How can I improve my API's performance?”  
+Q: “Why is my Node.js service throwing 503 errors?”  
+Q: “Optimize this deployment.”  (no YAML or metrics provided)  
+Q: “How do I secure my REST endpoints?”  (no framework or auth details)
 
-Q: “Can you review this code snippet?”  
-A: NON_IMPROVABLE
+— NON_IMPROVABLE  
+Q: “Please refactor this Python function:  
+\`\`\`  
+def calculate(a, b): return a+b  
+\`\`\`”  
+Q: “Fix the null-pointer exception in this Java stack trace.”  
+Q: “Review my Terraform config for AWS VPC.”  
+Q: “Debug this Dockerfile—build keeps failing.”
 
-Q: “Optimize this SQL query: SELECT * FROM users WHERE …”  
-A: NON_IMPROVABLE
+— MIXED INTENT (choose dominant)  
+Q: “What is Docker, and can you optimize my Dockerfile?” → NON_IMPROVABLE  
+Q: “Explain event-driven architectures and their use cases.” → IMPROVABLE  
 
-Q: “What is C++?”  
-A: IMPROVABLE
+NOW: Read the user's prompt below. Reply with exactly one label:  
+IMPROVABLE / NEEDS_MORE_INFO / NON_IMPROVABLE
 
-Q: “Explain promises in JavaScript.”  
-A: IMPROVABLE
-
-Q: “List best practices for React state management.”  
-A: IMPROVABLE
-
-Q: “Describe the Observer pattern.”  
-A: IMPROVABLE
-
-Now classify this prompt (respond with exactly one label):  
+——  
 ${rawPrompt}
-`
+`;
 }
-function buildTemplate(rawPrompt) {
-  return `You are a “Prompt Refinement Assistant.”  
+
+const RULES_PROMPT = `
+You are a “Prompt Refinement Assistant.”  
 Given a raw user question, you will:  
   1. Detect the primary domain or language by looking for keywords.  
   2. Assign reasonable defaults for “Environment/Version” and “Audience” based on that domain.  
@@ -72,7 +83,6 @@ Steps:
 1. {{step1}}  
 2. {{step2}}  
 3. {{step3}}  
-----------------------------------------------------------
 
 Always fill **all** slots. Infer sensible defaults when unspecified.  
 Try to provide code examples wherever applicable.
@@ -83,7 +93,9 @@ I am gonna give you a few examples to get familiar
 The audience are exceptional Software engineers so adjust and information keeping that in mind
 Make sure to include all the requirements to clearly explain the concept asked in the prompt. Don't miss anything.
 Don't include non-technical information in the prompt, only use technically useful information.
+`;
 
+const EXAMPLE_INJECTIONS = `
 Example 1:
 Prompt :  How do I reverse string in C++.
 
@@ -120,7 +132,7 @@ Role: You are an expert in Python.
 Context:
 
 * Environment/Version: Python 3.11+
-* Audience: Experienced software engineers with proficiency in general programming concepts
+* Audience: Experienced software engineers working in Oracle with proficiency in general programming concepts
 
 Question:
 What is __name__ in Python?
@@ -180,66 +192,113 @@ Steps:
 3. Contrast mutability, reassignment, and reference behavior using let and const (including for objects/arrays)
 4. Outline best practices and caveats in production code
 5. Conclude with guidance for selecting the appropriate declaration in different scenarios
+`;
 
-
-Now refine this raw question into the populated template:  
-${rawPrompt}
-`
+function getRulesPrompt() {
+  return RULES_PROMPT.trim();
 }
 
-/**
- * Call Ollama's local /api/generate endpoint to get a completion.
- */
-async function runOllama({ model, prompt, max_tokens = 512, temperature = 0.2 }) {
-  const response = await fetch('http://localhost:11434/api/generate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, prompt, max_tokens, temperature, stream: false })
+function getExamplePrompts() {
+  return EXAMPLE_INJECTIONS.trim();
+}
+
+function buildFewShotPrompt(rawPrompt) {
+  return [
+    getRulesPrompt(),
+    getExamplePrompts(),
+    `Now refine this raw question into the populated template:
+${rawPrompt}`,
+  ].join("\n\n");
+}
+
+async function runOllama({
+  model,
+  prompt,
+  max_tokens = 512,
+  temperature = 0.2,
+}) {
+  const response = await fetch("http://localhost:11434/api/generate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      prompt,
+      max_tokens,
+      temperature,
+      stream: false,
+    }),
   });
 
   if (!response.ok) {
-    throw new Error(`Ollama API error: ${response.status} ${response.statusText}`);
+    throw new Error(
+      `Ollama API error: ${response.status} ${response.statusText}`
+    );
   }
 
   const json = await response.json();
-  // Adjust parsing based on your Ollama version:
-  if (json.choices) {
-    return json.choices[0].text;
-  }
-  if (json.results && json.results[0].choices) {
-    return json.results[0].choices[0].text;
-  }
+  if (json.choices) return json.choices[0].text;
+  if (json.results?.[0]?.choices) return json.results[0].choices[0].text;
   return JSON.stringify(json);
 }
 
-/**
- * Parse the model's raw text output to extract the improved prompt.
- */
 function parseOutput(text) {
-  const parts = JSON.parse(text);
-  return parts.response;
+  try {
+    const parsed = JSON.parse(text);
+    return parsed.response;
+  } catch {
+    return text;
+  }
 }
 
-/**
- * Full pipeline: ingest raw prompt → improve → return.
- */
 export async function improvePrompt(rawPrompt) {
-  let promptStatus = await runOllama({ model: 'llama3.1:8b', prompt: classifyPrompt(rawPrompt)});
-    promptStatus = parseOutput(promptStatus);
-  let template;
-  console.log('Status : ', promptStatus);
-  if(promptStatus === 'IMPROVABLE')
-     template = buildTemplate(rawPrompt);
-  console.log('template : ', template);
-  console.log('-----------------------------------');
-  const rawOutput = await runOllama({ model: 'llama3.1:8b', prompt: template });
-  console.log('Raw output : ', rawOutput);
-  return parseOutput(rawOutput);
+  const classificationText = await runOllama({
+    model: "llama3.1:8b",
+    prompt: classifyPrompt(rawPrompt),
+  });
+  const status = parseOutput(classificationText).trim();
+  console.log("Classification:", status);
+
+  if (status !== "IMPROVABLE") {
+    return rawPrompt;
+  }
+
+  const fewShot = buildFewShotPrompt(rawPrompt);
+  const rawRefinement = await runOllama({
+    model: "llama3.1:8b",
+    prompt: fewShot,
+  });
+  return parseOutput(rawRefinement).trim();
 }
 
-// Example usage: outputs only the improved prompt text
-(async () => {
-  const raw = 'What is Application layer in TCP/IP Model';
-  const improved = await improvePrompt(raw);
-  console.log(improved);
-})();
+const PORT = process.env.PORT || 8080;
+
+const server = http.createServer(async (req, res) => {
+  if (req.method === "POST" && req.url === "/improve") {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+    req.on("end", async () => {
+      try {
+        const { prompt: rawPrompt } = JSON.parse(body);
+        if (!rawPrompt) throw new Error('Missing "prompt" in request body');
+        const improvedPrompt = await improvePrompt(rawPrompt);
+        const responseBody = JSON.stringify({ improvedPrompt });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(responseBody);
+      } catch (err) {
+        res.writeHead(err.message.includes("Missing") ? 400 : 500, {
+          "Content-Type": "application/json",
+        });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+  } else {
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Not Found" }));
+  }
+});
+
+server.listen(PORT, () => {
+  console.log(`Prompt Improver API listening on port ${PORT}`);
+});
