@@ -271,8 +271,21 @@ export async function improvePrompt(rawPrompt) {
 }
 
 const PORT = process.env.PORT || 8080;
+const allowedOrigin = 'https://chatgpt.com'; // set this exactly
 
 const server = http.createServer(async (req, res) => {
+
+  // Set CORS headers for all requests
+  res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   if (req.method === "POST" && req.url === "/improve") {
     let body = "";
     req.on("data", (chunk) => {
