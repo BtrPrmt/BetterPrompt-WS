@@ -211,6 +211,57 @@ ${rawPrompt}`,
   ].join("\n\n");
 }
 
+function ratingPrompt(rawPrompt) {
+  return `
+You are an expert prompt evaluator specializing in assessing the quality and effectiveness of language model prompts.
+
+Your task is to evaluate the given prompt using two key criteria:
+
+**EVALUATION CRITERIA:**
+
+1. **Clarity** (Weight: 20%)
+   - How clearly does the prompt communicate what is being asked?
+   - Are the instructions unambiguous and easy to follow?
+   - Is the language simple and accessible without jargon?
+   - Are the expectations and desired outcomes clearly stated?
+
+2. **Comprehensiveness** (Weight: 80%)
+   - Does the prompt contain sufficient detail to guide an LLM effectively?
+   - Is it specific enough to generate useful, focused responses?
+   - Does it provide adequate context and constraints?
+   - Are all necessary elements included for the task?
+
+**SCORING SCALE:**
+Rate each criterion on a scale of 1-5:
+- 1 = Very Poor: Major deficiencies that severely impact effectiveness
+- 2 = Poor: Significant issues that hinder performance
+- 3 = Average: Adequate but with room for improvement
+- 4 = Good: Well-executed with minor areas for enhancement
+- 5 = Excellent: Exceptional quality with minimal flaws
+
+**INSTRUCTIONS:**
+1. Read the provided prompt carefully
+2. Evaluate it against both criteria using the 1-5 scale
+3. Calculate the overall score by averaging the two criterion scores
+4. Round the final score to the nearest whole number
+5. Provide ONLY the final integer score (1, 2, 3, 4, or 5)
+
+**EXAMPLE EVALUATION PROCESS:**
+- If Clarity = 4 and Comprehensiveness = 3
+- Overall = (4 + 3) ÷ 2 = 3.5, rounded to 4
+
+Now evaluate this prompt:
+
+${rawPrompt}
+
+Response format: Provide only the integer score.
+
+IMPORTANT:
+Reply with **ONLY one integer** — **1**, **2**, **3**, **4**, or **5**.  
+Do **not** include any explanation or comment.
+`;
+}
+
 async function runOllama({
   model,
   prompt,
@@ -248,6 +299,59 @@ function parseOutput(text) {
   } catch {
     return text;
   }
+}
+
+// GPT Supports this, OLLAMA doesn't
+
+/*
+async function calculatePerplexity(prompt, model = "llama3.1:8b") {
+  console.log("in calculatePerplexity")
+  console.log("prompt: " + prompt)
+
+  const response = await fetch('http://localhost:11434/api/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: "llama3.1:8b",
+      prompt,
+      max_tokens: 0, 
+      temperature: 0,
+      logprobs: true,
+    }),
+  });
+
+  if (!response.ok) throw new Error('Ollama API error');
+
+  const data = await response.json();
+
+  // You need to adjust the logic here based on actual API response shape
+  const tokens = data.tokens || [];
+  if (!tokens.length) throw new Error('No token logprobs returned');
+
+  let nlls = [];
+  for (const tokenObj of tokens) {
+    let negLogLikelihood = tokenObj.logprob;
+    if (negLogLikelihood == null) negLogLikelihood = -100;
+    nlls.push(-negLogLikelihood); // Usually logprob is negative; adjust as needed
+  }
+
+  const perplexity = Math.exp(nlls.reduce((a, b) => a + b, 0) / nlls.length);
+  console.log("perplexity calculate: "+ perplexity)
+  return perplexity;
+}
+*/
+
+export async function calculatePerplexity(rawPrompt) {
+  // LLM-as-a-Judge approach, untill logprobs approach is sorted
+  const ratingText = await runOllama({
+    model: "llama3.1:8b",
+    prompt: ratingPrompt(rawPrompt),
+  });
+  const rating = parseOutput(ratingText).trim();
+  console.log("Rating:", rating);
+
+
+  return rating;
 }
 
 export async function improvePrompt(rawPrompt) {
@@ -303,6 +407,21 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(err.message.includes("Missing") ? 400 : 500, {
           "Content-Type": "application/json",
         });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+  } else if (req.method === "POST" && req.url === "/perplexity") {
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", async () => {
+      try {
+        const { prompt } = JSON.parse(body);
+        if (!prompt) throw new Error('Missing "prompt" in request body');
+        const promptRating = await calculatePerplexity(prompt);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ promptRating }));
+      } catch (err) {
+        res.writeHead(err.message.includes("Missing") ? 400 : 500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: err.message }));
       }
     });
