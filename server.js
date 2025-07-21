@@ -4,7 +4,8 @@ import {
   EXAMPLE_INJECTIONS,
   RULES_PROMPT,
   classifyPrompt,
-  ratingPrompt,
+  ratingPromptClarity,
+  ratingPromptComprehensiveness
 } from "./utils.js";
 
 import * as generativeaiinference from "oci-generativeaiinference";
@@ -15,6 +16,8 @@ const provider = new common.ConfigFileAuthenticationDetailsProvider(
   configurationFilePath,
   configProfile
 );
+
+const MODEL = "cohere.command-latest";
 
 function getRulesPrompt() {
   return RULES_PROMPT.trim();
@@ -114,19 +117,30 @@ async function calculatePerplexity(prompt, model = "llama3.1:8b") {
 
 export async function calculatePerplexity(rawPrompt) {
   // LLM-as-a-Judge approach, untill logprobs approach is sorted
-  const ratingText = await runOCI({
-    model: "cohere.command-latest",
-    prompt: ratingPrompt(rawPrompt),
+  const ratingTextClarity = await runOCI({
+    model: MODEL,
+    prompt: ratingPromptClarity(rawPrompt),
   });
-  const rating = parseOutput(ratingText).trim();
-  console.log("Rating:", rating);
+
+  const ratingTextComprehensiveness = await runOCI({
+    model: MODEL,
+    prompt: ratingPromptComprehensiveness(rawPrompt),
+  });
+  
+  const ratingClarity = parseOutput(ratingTextClarity).trim();
+  const ratingComprehensiveness = parseOutput(ratingTextComprehensiveness).trim();
+  const rating = Math.round(ratingClarity * 0.3 + ratingComprehensiveness * 0.7);
+
+  // console.log("Clarity Rating: ", ratingClarity);
+  // console.log("Comprehensiveness Rating: ", ratingComprehensiveness);
+  // console.log("Rating: ", rating);
 
   return rating;
 }
 
 export async function improvePrompt(rawPrompt) {
   const classificationText = await runOCI({
-    model: "cohere.command-latest",
+    model: MODEL,
     prompt: classifyPrompt(rawPrompt),
   });
   const status = parseOutput(classificationText).trim();
@@ -139,7 +153,7 @@ export async function improvePrompt(rawPrompt) {
 
   const fewShot = buildFewShotPrompt(rawPrompt);
   const rawRefinement = await runOCI({
-    model: "cohere.command-latest",
+    model: MODEL,
     prompt: fewShot,
   });
   return parseOutput(rawRefinement).trim();

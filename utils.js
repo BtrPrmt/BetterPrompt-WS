@@ -192,44 +192,67 @@ Steps:
 5. Conclude with guidance for selecting the appropriate declaration in different scenarios
 `;
 
-export function ratingPrompt(rawPrompt) {
+export function ratingPromptClarity(rawPrompt) {
   return `
 You are an expert prompt evaluator specializing in assessing the quality and effectiveness of language model prompts.
 
-Your task is to evaluate the given prompt using two key criteria:
+Your task is to evaluate Clarity of the given prompt using the followin criteria:
 
 **EVALUATION CRITERIA:**
-
-1. **Clarity** (Weight: 20%)
-   - How clearly does the prompt communicate what is being asked?
-   - Are the instructions unambiguous and easy to follow?
-   - Is the language simple and accessible without jargon?
-   - Are the expectations and desired outcomes clearly stated?
-
-2. **Comprehensiveness** (Weight: 80%)
-   - Does the prompt contain sufficient detail to guide an LLM effectively?
-   - Is it specific enough to generate useful, focused responses?
-   - Does it provide adequate context and constraints?
-   - Are all necessary elements included for the task?
+  - How clearly does the prompt communicate what is being asked?
+  - Are the instructions unambiguous and easy to follow?
+  - Is the language simple and accessible without jargon?
+  - Are the expectations and desired outcomes clearly stated?
 
 **SCORING SCALE:**
-Rate each criterion on a scale of 1-5:
-- 1 = Very Poor: Major deficiencies that severely impact effectiveness
-- 2 = Poor: Significant issues that hinder performance
-- 3 = Average: Adequate but with room for improvement
-- 4 = Good: Well-executed with minor areas for enhancement
-- 5 = Excellent: Exceptional quality with minimal flaws
+Rate Clarity on a scale of 1-5:
+- 1 = Very Poor
+- 2 = Poor
+- 3 = Average
+- 4 = Good
+- 5 = Excellent
 
 **INSTRUCTIONS:**
 1. Read the provided prompt carefully
-2. Evaluate it against both criteria using the 1-5 scale
-3. Calculate the overall score by averaging the two criterion scores
-4. Round the final score to the nearest whole number
-5. Provide ONLY the final integer score (1, 2, 3, 4, or 5)
+2. Evaluate it against provided criteria using the 1-5 scale
+3. Provide ONLY the final integer score (1, 2, 3, 4, or 5)
 
-**EXAMPLE EVALUATION PROCESS:**
-- If Clarity = 4 and Comprehensiveness = 3
-- Overall = (4 + 3) ÷ 2 = 3.5, rounded to 4
+Now evaluate this prompt:
+
+${rawPrompt}
+
+Response format: Provide only the integer score.
+
+IMPORTANT:
+Reply with **ONLY one integer** — **1**, **2**, **3**, **4**, or **5**.  
+Do **not** include any explanation or comment.
+`;
+}
+
+export function ratingPromptComprehensiveness(rawPrompt) {
+  return `
+You are an expert prompt evaluator specializing in assessing the quality and effectiveness of language model prompts.
+
+Your task is to evaluate Comprehensiveness of the given prompt using the followin criteria:
+
+**EVALUATION CRITERIA:**
+  - Does the prompt contain sufficient detail to guide an LLM effectively?
+  - Is it specific enough to generate useful, focused responses?
+  - Does it provide adequate context and constraints?
+  - Are all necessary elements included for the task?
+
+**SCORING SCALE:**
+Rate Comprehensiveness on a scale of 1-5:
+- 1 = Very Poor
+- 2 = Poor
+- 3 = Average
+- 4 = Good
+- 5 = Excellent
+
+**INSTRUCTIONS:**
+1. Read the provided prompt carefully
+2. Evaluate it against provided criteria using the 1-5 scale
+3. Provide ONLY the final integer score (1, 2, 3, 4, or 5)
 
 Now evaluate this prompt:
 
