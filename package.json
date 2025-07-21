@@ -9,5 +9,10 @@
   "author": "",
   "license": "ISC",
   "type": "module",
-  "description": ""
+  "description": "",
+  "dependencies": {
+    "dotenv": "^17.2.0",
+    "oci-common": "^2.112.2",
+    "oci-generativeaiinference": "^2.112.2"
+  }
 }
